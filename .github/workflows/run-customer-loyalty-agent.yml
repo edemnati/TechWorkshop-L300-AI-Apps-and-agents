@@ -60,8 +60,8 @@ jobs:
           AZ_CREDS: ${{ secrets.AZURE_CREDENTIALS }}
         run: |
           if [ -n "$AZ_CREDS" ]; then
-            echo "$AZ_CREDS" > azure_creds.json
-            # Try using jq to parse; fallback to Python if jq isn't available.
+            printf "%s\n" "$AZ_CREDS" > azure_creds.json
+            # Prefer jq if available for simpler parsing
             if command -v jq >/dev/null 2>&1; then
               CLIENT_ID=$(jq -r '.clientId // empty' azure_creds.json)
               TENANT_ID=$(jq -r '.tenantId // empty' azure_creds.json)
@@ -72,6 +72,7 @@ jobs:
               [ -n "$CLIENT_SECRET" ] && echo "AZURE_CLIENT_SECRET=$CLIENT_SECRET" >> "$GITHUB_ENV"
               [ -n "$SUBSCRIPTION_ID" ] && echo "AZURE_SUBSCRIPTION_ID=$SUBSCRIPTION_ID" >> "$GITHUB_ENV"
             else
+              # Fallback to Python for JSON parsing
               python - <<'PY'
 import json, os
 creds = json.load(open('azure_creds.json'))
