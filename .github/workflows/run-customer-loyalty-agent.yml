@@ -39,7 +39,6 @@ jobs:
           creds: ${{ secrets.AZURE_CREDENTIALS }}
 
       - name: Export AZURE_* environment variables for SDKs (parse AZURE_CREDENTIALS with Python)
-        # Use Python to parse the AZURE_CREDENTIALS secret reliably and write to GITHUB_ENV.
         env:
           AZURE_CREDENTIALS: ${{ secrets.AZURE_CREDENTIALS }}
         run: |
@@ -102,11 +101,24 @@ jobs:
           echo "PYTHONPATH=${{ github.workspace }}/src" >> $GITHUB_ENV
         shell: bash
 
-      - name: Show installed packages and debug imports (optional)
+      - name: Show installed packages and debug imports (robust)
         run: |
           python -m pip show python-dotenv azure-identity azure-ai-projects || true
-          python -c "import importlib, sys; print('agent_processor importable:', importlib.util.find_spec('agent_processor') is not None)"
-          python -c "import os; print('AZURE_PROJECTS_ENDPOINT=', os.environ.get('AZURE_PROJECTS_ENDPOINT'))"
+          python - <<'PY'
+          import os, sys
+          ok = False
+          # Try importlib.util.find_spec first (normal case)
+          try:
+            from importlib.util import find_spec
+            ok = find_spec('agent_processor') is not None
+          except Exception:
+            # Fallback to pkgutil (handles cases where importlib is shadowed)
+            import pkgutil
+            ok = pkgutil.find_loader('agent_processor') is not None
+          print('agent_processor importable:', ok)
+          print('PYTHONPATH=', os.environ.get('PYTHONPATH'))
+          print('AZURE_PROJECTS_ENDPOINT=', os.environ.get('AZURE_PROJECTS_ENDPOINT'))
+          PY
         shell: bash
 
       - name: Run customerLoyaltyAgent initializer
