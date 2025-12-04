@@ -17,7 +17,6 @@ jobs:
   run-agent:
     runs-on: ubuntu-latest
     env:
-      # Provide the Projects endpoint via repository secret
       AZURE_PROJECTS_ENDPOINT: ${{ secrets.AZURE_PROJECTS_ENDPOINT }}
     steps:
       - name: Checkout repository
@@ -53,8 +52,6 @@ jobs:
             creds = json.loads(s)
           except Exception as e:
             print("Failed to parse AZURE_CREDENTIALS JSON:", e, file=sys.stderr)
-            print("Ensure the repository secret AZURE_CREDENTIALS contains valid JSON like:", file=sys.stderr)
-            print('{"clientId":"...","clientSecret":"...","tenantId":"...","subscriptionId":"..."}', file=sys.stderr)
             sys.exit(1)
           client_id = creds.get("clientId") or creds.get("client_id")
           tenant_id = creds.get("tenantId") or creds.get("tenant_id")
@@ -83,7 +80,6 @@ jobs:
           if [ -f requirements.txt ]; then
             pip install -r requirements.txt
           else
-            # Install core deps needed by your code and Azure SDK pieces
             pip install --upgrade \
               python-dotenv \
               azure-identity \
@@ -92,26 +88,21 @@ jobs:
               azure-search-documents
           fi
 
-          # If repository is a package, install it editable so local modules are importable
           if [ -f setup.py ] || [ -f pyproject.toml ]; then
             pip install -e .
           fi
         shell: bash
 
       - name: Create .env from ENV repository secret (kept only in workspace) and restrict permissions
-        # writes to both repository root .env and src/.env (some code expects root .env, some expects src/.env)
         run: |
-          # create .env and src/.env from the ENV secret (if the secret is empty this will create an empty file)
+          # create .env and src/.env from the ENV secret
           printf '%s\n' "${{ secrets.ENV }}" > .env
           mkdir -p src
           printf '%s\n' "${{ secrets.ENV }}" > src/.env
           chmod 600 .env src/.env
         shell: bash
 
-      - name: Export variables from .env into job environment (GITHUB_ENV)
-        # Use python-dotenv to robustly parse the .env file and write each key to GITHUB_ENV.
-        # This avoids issues where libraries try to read env vars (like SEARCH_ENDPOINT) before your Python code
-        # loads .env itself.
+      - name: Export variables from .env into job environment (GITHUB_ENV) and ensure SEARCH_ENDPOINT exists
         run: |
           python - <<'PY'
           import os, sys
@@ -124,20 +115,24 @@ jobs:
           if not os.path.exists(env_path):
             print(".env not found, nothing to export", file=sys.stderr)
             sys.exit(1)
-          values = dotenv_values(env_path)  # returns dict of key->value
+          values = dotenv_values(env_path)
           gh_env = os.environ.get("GITHUB_ENV")
           if not gh_env:
             print("GITHUB_ENV not available", file=sys.stderr)
             sys.exit(1)
-          # write each non-empty value to GITHUB_ENV (do not print secrets)
+          # write each non-empty value to GITHUB_ENV
           with open(gh_env, "a") as f:
             for k, v in values.items():
               if v is None:
                 continue
-              # Replace any newlines with \n to keep single-line entries in env file
+              # Keep values on a single line; escape newlines
               v_str = str(v).replace("\n", "\\n")
               f.write(f"{k}={v_str}\n")
-          print("Exported variables from .env to GITHUB_ENV")
+          # Ensure SEARCH_ENDPOINT is present (fail early with helpful message if not)
+          if not values.get("SEARCH_ENDPOINT"):
+            print("ERROR: SEARCH_ENDPOINT not found in .env (ENV secret). Ensure ENV repository secret contains SEARCH_ENDPOINT=<value>.", file=sys.stderr)
+            sys.exit(1)
+          print("Exported variables from .env to GITHUB_ENV (including SEARCH_ENDPOINT)")
           PY
         shell: bash
 
@@ -160,20 +155,21 @@ jobs:
           print('agent_processor importable:', ok)
           print('PYTHONPATH=', os.environ.get('PYTHONPATH'))
           print('AZURE_PROJECTS_ENDPOINT=', os.environ.get('AZURE_PROJECTS_ENDPOINT'))
-          # Do not print secrets like SEARCH_ENDPOINT or keys
+          # do not print secret values such as SEARCH_ENDPOINT
           PY
         shell: bash
 
       - name: Run customerLoyaltyAgent initializer
         env:
-          # AZURE_PROJECTS_ENDPOINT and AZURE_* variables were set earlier (AZURE_* via GITHUB_ENV)
           AZURE_PROJECTS_ENDPOINT: ${{ env.AZURE_PROJECTS_ENDPOINT }}
           AZURE_CLIENT_ID: ${{ env.AZURE_CLIENT_ID }}
           AZURE_TENANT_ID: ${{ env.AZURE_TENANT_ID }}
           AZURE_CLIENT_SECRET: ${{ env.AZURE_CLIENT_SECRET }}
           AZURE_SUBSCRIPTION_ID: ${{ env.AZURE_SUBSCRIPTION_ID }}
+          SEARCH_ENDPOINT: ${{ env.SEARCH_ENDPOINT }}
         run: |
           python --version
           python -c "import os; print('AZURE_PROJECTS_ENDPOINT=', os.environ.get('AZURE_PROJECTS_ENDPOINT'))"
+          python -c "import os; print('SEARCH_ENDPOINT set=', bool(os.environ.get('SEARCH_ENDPOINT')))"
           python src/app/agents/customerLoyaltyAgent_initializer.py
         shell: bash
