@@ -39,8 +39,8 @@ jobs:
           file: src/Dockerfile
           push: true
           tags: |
-            ${{ secrets.ACR_LOGIN_SERVER }}/techworkshop:${{ github.sha }}
-            ${{ secrets.ACR_LOGIN_SERVER }}/techworkshop:latest
+            ${{ secrets.ACR_LOGIN_SERVER }}/chat-app:${{ github.sha }}
+            ${{ secrets.ACR_LOGIN_SERVER }}/chat-app:latest
 
       - name: Cleanup .env
         if: always()
