@@ -5,7 +5,7 @@ on:
     branches:
       - main
     paths:
-      - 'src/app/agents/customerLoyaltyAgent_initializer.py'
+      - 'src/app/agents/customerLoyaltyAgent_initializer. py'
       - 'src/prompts/CustomerLoyaltyAgentPrompt.txt'
       - 'src/app/tools/discountLogic. py'
   pull_request:
@@ -49,7 +49,10 @@ jobs:
         run: |
           python src/app/agents/customerLoyaltyAgent_initializer.py
         env:
-          AZURE_CREDENTIALS: ${{ secrets.AZURE_CREDENTIALS }}
+          AZURE_CREDENTIALS: ${{ secrets. AZURE_CREDENTIALS }}
+          INDEX_NAME: ${{ secrets.INDEX_NAME }}
+          SEARCH_ENDPOINT: ${{ secrets.SEARCH_ENDPOINT }}
+          SEARCH_KEY: ${{ secrets.SEARCH_KEY }}
 
       - name: Azure Logout
         if: always()
