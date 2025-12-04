@@ -1,0 +1,55 @@
+name: Run Customer Loyalty Agent
+
+on:
+  push:
+    paths:
+      - 'src/app/agents/customerLoyaltyAgent_initializer.py'
+      - 'src/app/tools/discountLogic.py'
+      - 'src/prompts/CustomerLoyaltyAgentPrompt.txt'
+  pull_request:
+    paths:
+      - 'src/app/agents/customerLoyaltyAgent_initializer.py'
+      - 'src/app/tools/discountLogic.py'
+      - 'src/prompts/CustomerLoyaltyAgentPrompt.txt'
+  workflow_dispatch:
+
+jobs:
+  run-agent:
+    runs-on: ubuntu-latest
+    env:
+      # These should be configured in the repository Secrets
+      AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+      AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+      AZURE_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
+      AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+      # The endpoint used by azure.ai.projects (set as a secret)
+      AZURE_PROJECTS_ENDPOINT: ${{ secrets.AZURE_PROJECTS_ENDPOINT }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
+
+      - name: Upgrade pip and install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          # If your repo has requirements.txt, install from it; otherwise install the Azure packages needed.
+          if [ -f requirements.txt ]; then
+            pip install -r requirements.txt
+          else
+            pip install azure-ai-projects azure-identity
+          fi
+
+      - name: Add src to PYTHONPATH
+        run: echo "PYTHONPATH=${{ github.workspace }}/src" >> $GITHUB_ENV
+
+      - name: Run customerLoyaltyAgent initializer
+        run: |
+          # Print environment info (masking secrets by GitHub, but helpful for debugging)
+          python --version
+          python -c "import sys, os; print('PYTHONPATH=', os.environ.get('PYTHONPATH'))"
+          # Run the main initializer script
+          python src/app/agents/customerLoyaltyAgent_initializer.py
