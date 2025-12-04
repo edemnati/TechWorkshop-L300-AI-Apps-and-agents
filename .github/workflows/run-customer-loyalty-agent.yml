@@ -30,21 +30,25 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y jq
 
-      - name: Write ENV secret to .env and extract AZURE_AI_AGENT_ENDPOINT
+      - name: Create .env from secret (kept only in workspace)
         run: |
-          # Write the repository secret named ENV to a .env file so application code that reads .env can use it
-          printf '%s\n' "${{ secrets.ENV }}" > .env
+          # create src/.env from the ENV secret and restrict permissions
+          printf '%s' "${{ secrets.ENV }}" > src/.env
+          chmod 600 src/.env
+        shell: bash
 
-          # Extract AZURE_AI_AGENT_ENDPOINT from the ENV secret contents (supports quoted/unquoted values)
-          AZ_ENDPOINT=$(printf '%s\n' "${{ secrets.ENV }}" | sed -n -E "s/^[[:space:]]*AZURE_AI_AGENT_ENDPOINT[[:space:]]*=[[:space:]]*['\"]?(.*)['\"]?[[:space:]]*$/\1/p" | tr -d '\r' | head -n 1)
-
+      - name: Extract AZURE_AI_AGENT_ENDPOINT from src/.env and export to GITHUB_ENV
+        run: |
+          # Read the src/.env file and extract AZURE_AI_AGENT_ENDPOINT (supports quoted/unquoted values)
+          AZ_ENDPOINT=$(sed -n -E "s/^[[:space:]]*AZURE_AI_AGENT_ENDPOINT[[:space:]]*=[[:space:]]*['\"]?(.*)['\"]?[[:space:]]*$/\1/p" src/.env | tr -d '\r' | head -n 1)
           if [ -n "$AZ_ENDPOINT" ]; then
             echo "AZURE_AI_AGENT_ENDPOINT=$AZ_ENDPOINT" >> $GITHUB_ENV
-            echo "Exported AZURE_AI_AGENT_ENDPOINT from ENV secret"
+            echo "Exported AZURE_AI_AGENT_ENDPOINT from src/.env"
           else
-            echo "Error: AZURE_AI_AGENT_ENDPOINT not found in ENV secret. Ensure ENV repository secret includes AZURE_AI_AGENT_ENDPOINT." >&2
+            echo "Error: AZURE_AI_AGENT_ENDPOINT not found in src/.env. Ensure ENV repository secret includes AZURE_AI_AGENT_ENDPOINT." >&2
             exit 1
           fi
+        shell: bash
 
       - name: Login to Azure using service principal (AZURE_CREDENTIALS)
         uses: azure/login@v1
@@ -79,7 +83,7 @@ jobs:
 
       - name: Run customerLoyaltyAgent initializer
         env:
-          # AZURE_AI_AGENT_ENDPOINT is exported to GITHUB_ENV in an earlier step, so reference it here
+          # AZURE_AI_AGENT_ENDPOINT is exported to GITHUB_ENV earlier
           AZURE_AI_AGENT_ENDPOINT: ${{ env.AZURE_AI_AGENT_ENDPOINT }}
         run: |
           python --version
