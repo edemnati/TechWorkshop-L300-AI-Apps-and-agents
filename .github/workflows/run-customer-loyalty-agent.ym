@@ -16,14 +16,6 @@ on:
 jobs:
   run-agent:
     runs-on: ubuntu-latest
-    env:
-      # These should be configured in the repository Secrets
-      AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
-      AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
-      AZURE_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
-      AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
-      # The endpoint used by azure.ai.projects (set as a secret)
-      AZURE_PROJECTS_ENDPOINT: ${{ secrets.AZURE_PROJECTS_ENDPOINT }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -33,23 +25,70 @@ jobs:
         with:
           python-version: '3.11'
 
-      - name: Upgrade pip and install dependencies
+      - name: Ensure jq is available (for parsing AZURE_CREDENTIALS)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y jq
+
+      - name: Write local .env contents from secret and extract AZURE_AI_AGENT_ENDPOINT
+        # Store the contents of your local .env in the repository secret named "ENV"
+        run: |
+          printf '%s\n' "${{ secrets.ENV }}" > .env
+
+          # Try to extract AZURE_AI_AGENT_ENDPOINT from the ENV secret (.env contents).
+          AZ_ENDPOINT=$(printf '%s\n' "${{ secrets.ENV }}" | sed -n -E "s/^[[:space:]]*AZURE_AI_AGENT_ENDPOINT[[:space:]]*=[[:space:]]*['\"]?(.*)['\"]?[[:space:]]*$/\1/p" | tr -d '\r' | head -n 1)
+
+          # If not found in ENV secret, fall back to a repository secret named AZURE_AI_AGENT_ENDPOINT (optional)
+          if [ -z "$AZ_ENDPOINT" ] && [ -n "${{ secrets.AZURE_AI_AGENT_ENDPOINT }}" ]; then
+            AZ_ENDPOINT="${{ secrets.AZURE_AI_AGENT_ENDPOINT }}"
+            echo "AZURE_AI_AGENT_ENDPOINT taken from repository secret AZURE_AI_AGENT_ENDPOINT"
+          fi
+
+          if [ -n "$AZ_ENDPOINT" ]; then
+            echo "AZURE_AI_AGENT_ENDPOINT=$AZ_ENDPOINT" >> $GITHUB_ENV
+            echo "Extracted AZURE_AI_AGENT_ENDPOINT and exported to GITHUB_ENV"
+          else
+            echo "Warning: AZURE_AI_AGENT_ENDPOINT not found in ENV secret or repository secrets."
+          fi
+
+      - name: Login to Azure using service principal (AZURE_CREDENTIALS)
+        uses: azure/login@v1
+        with:
+          creds: ${{ secrets.AZURE_CREDENTIALS }}
+
+      - name: Export AZURE_* environment variables for SDKs (from AZURE_CREDENTIALS)
+        run: |
+          echo "${{ secrets.AZURE_CREDENTIALS }}" > /tmp/azure_creds.json
+          AZ_CLIENT_ID=$(jq -r .clientId /tmp/azure_creds.json)
+          AZ_TENANT_ID=$(jq -r .tenantId /tmp/azure_creds.json)
+          AZ_CLIENT_SECRET=$(jq -r .clientSecret /tmp/azure_creds.json)
+          echo "AZURE_CLIENT_ID=$AZ_CLIENT_ID" >> $GITHUB_ENV
+          echo "AZURE_TENANT_ID=$AZ_TENANT_ID" >> $GITHUB_ENV
+          echo "AZURE_CLIENT_SECRET=$AZ_CLIENT_SECRET" >> $GITHUB_ENV
+          SUBS_ID=$(jq -r .subscriptionId // empty /tmp/azure_creds.json)
+          if [ -n "$SUBS_ID" ]; then
+            echo "AZURE_SUBSCRIPTION_ID=$SUBS_ID" >> $GITHUB_ENV
+          fi
+
+      - name: Upgrade pip and install Python dependencies
         run: |
           python -m pip install --upgrade pip
-          # If your repo has requirements.txt, install from it; otherwise install the Azure packages needed.
           if [ -f requirements.txt ]; then
             pip install -r requirements.txt
           else
-            pip install azure-ai-projects azure-identity
+            pip install azure-ai-projects azure-identity python-dotenv
           fi
 
       - name: Add src to PYTHONPATH
         run: echo "PYTHONPATH=${{ github.workspace }}/src" >> $GITHUB_ENV
 
       - name: Run customerLoyaltyAgent initializer
+        env:
+          # AZURE_AI_AGENT_ENDPOINT will be available if extracted earlier or supplied as a secret fallback.
+          # The AZURE_* variables for authentication were written to GITHUB_ENV in a prior step.
+          AZURE_AI_AGENT_ENDPOINT: ${{ env.AZURE_AI_AGENT_ENDPOINT }}
         run: |
-          # Print environment info (masking secrets by GitHub, but helpful for debugging)
           python --version
           python -c "import sys, os; print('PYTHONPATH=', os.environ.get('PYTHONPATH'))"
-          # Run the main initializer script
+          python -c "import os; print('AZURE_AI_AGENT_ENDPOINT=', os.environ.get('AZURE_AI_AGENT_ENDPOINT'))"
           python src/app/agents/customerLoyaltyAgent_initializer.py
