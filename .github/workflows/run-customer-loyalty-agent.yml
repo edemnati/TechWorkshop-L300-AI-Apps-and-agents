@@ -95,7 +95,7 @@ jobs:
 
       - name: Create .env from ENV repository secret (kept only in workspace) and restrict permissions
         run: |
-          # create .env and src/.env from the ENV secret
+          # write the ENV secret into .env and src/.env (do not print it)
           printf '%s\n' "${{ secrets.ENV }}" > .env
           mkdir -p src
           printf '%s\n' "${{ secrets.ENV }}" > src/.env
@@ -111,28 +111,56 @@ jobs:
           except Exception as e:
             print("python-dotenv not available:", e, file=sys.stderr)
             sys.exit(1)
+
           env_path = os.path.join(os.getcwd(), ".env")
           if not os.path.exists(env_path):
             print(".env not found, nothing to export", file=sys.stderr)
             sys.exit(1)
-          values = dotenv_values(env_path)
+
+          # Read .env into a dictionary
+          raw_values = dotenv_values(env_path)  # preserves keys, returns values as strings (may include quotes)
+
+          # Helper to clean values: strip surrounding quotes and whitespace
+          def clean_val(v):
+            if v is None:
+              return None
+            s = str(v).strip()
+            if len(s) >= 2 and ((s[0] == s[-1] == '"') or (s[0] == s[-1] == "'")):
+              s = s[1:-1]
+            return s
+
+          values = {k: clean_val(v) for k, v in raw_values.items()}
+
           gh_env = os.environ.get("GITHUB_ENV")
           if not gh_env:
             print("GITHUB_ENV not available", file=sys.stderr)
             sys.exit(1)
-          # write each non-empty value to GITHUB_ENV
+
+          # Write all cleaned values to GITHUB_ENV so libraries see them as real environment variables.
           with open(gh_env, "a") as f:
             for k, v in values.items():
               if v is None:
                 continue
-              # Keep values on a single line; escape newlines
-              v_str = str(v).replace("\n", "\\n")
+              # Escape newlines for GITHUB_ENV format
+              v_str = v.replace("\n", "\\n")
               f.write(f"{k}={v_str}\n")
-          # Ensure SEARCH_ENDPOINT is present (fail early with helpful message if not)
-          if not values.get("SEARCH_ENDPOINT"):
-            print("ERROR: SEARCH_ENDPOINT not found in .env (ENV secret). Ensure ENV repository secret contains SEARCH_ENDPOINT=<value>.", file=sys.stderr)
+
+          # Accept multiple alternative names for the search endpoint; prefer SEARCH_ENDPOINT
+          search_keys = ["SEARCH_ENDPOINT", "AZURE_SEARCH_ENDPOINT", "SEARCH_URL"]
+          search_val = None
+          for key in search_keys:
+            if values.get(key):
+              search_val = values.get(key)
+              # ensure canonical var name exists in environment
+              with open(gh_env, "a") as f:
+                f.write(f"SEARCH_ENDPOINT={values.get(key).replace('\\n','\\\\n')}\n")
+              break
+
+          if not search_val:
+            print("ERROR: SEARCH_ENDPOINT not found in .env (ENV secret). Check for SEARCH_ENDPOINT or AZURE_SEARCH_ENDPOINT in your ENV secret.", file=sys.stderr)
             sys.exit(1)
-          print("Exported variables from .env to GITHUB_ENV (including SEARCH_ENDPOINT)")
+
+          print("Exported variables from .env to GITHUB_ENV (SEARCH_ENDPOINT present)")
           PY
         shell: bash
 
@@ -155,7 +183,7 @@ jobs:
           print('agent_processor importable:', ok)
           print('PYTHONPATH=', os.environ.get('PYTHONPATH'))
           print('AZURE_PROJECTS_ENDPOINT=', os.environ.get('AZURE_PROJECTS_ENDPOINT'))
-          # do not print secret values such as SEARCH_ENDPOINT
+          # do not print secret values such as SEARCH_ENDPOINT or SEARCH_KEY
           PY
         shell: bash
 
@@ -167,6 +195,8 @@ jobs:
           AZURE_CLIENT_SECRET: ${{ env.AZURE_CLIENT_SECRET }}
           AZURE_SUBSCRIPTION_ID: ${{ env.AZURE_SUBSCRIPTION_ID }}
           SEARCH_ENDPOINT: ${{ env.SEARCH_ENDPOINT }}
+          SEARCH_KEY: ${{ env.SEARCH_KEY }}
+          INDEX_NAME: ${{ env.INDEX_NAME }}
         run: |
           python --version
           python -c "import os; print('AZURE_PROJECTS_ENDPOINT=', os.environ.get('AZURE_PROJECTS_ENDPOINT'))"
