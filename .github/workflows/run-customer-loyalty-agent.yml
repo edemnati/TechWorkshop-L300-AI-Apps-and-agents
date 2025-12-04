@@ -5,9 +5,9 @@ on:
     branches:
       - main
     paths:
-      - 'src/app/agents/customerLoyaltyAgent_initializer.py'
+      - 'src/app/agents/customerLoyaltyAgent_initializer. py'
       - 'src/prompts/CustomerLoyaltyAgentPrompt.txt'
-      - 'src/app/tools/discountLogic.py'
+      - 'src/app/tools/discountLogic. py'
   pull_request:
     branches:
       - main
@@ -28,7 +28,7 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: '3.11'  # Adjust to your required Python version
+          python-version: '3.11'
           cache: 'pip'
 
       - name: Install dependencies
@@ -43,17 +43,24 @@ jobs:
       - name: Azure Login
         uses: azure/login@v2
         with:
-          creds: ${{ secrets. AZURE_CREDENTIALS }}
+          creds: ${{ secrets.AZURE_CREDENTIALS }}
 
       - name: Run Customer Loyalty Agent
         run: |
           python src/app/agents/customerLoyaltyAgent_initializer.py
         env:
+          ACR_LOGIN_SERVER: ${{ secrets.ACR_LOGIN_SERVER }}
+          ACR_PASSWORD: ${{ secrets.ACR_PASSWORD }}
+          ACR_USERNAME: ${{ secrets.ACR_USERNAME }}
+          APPLICATIONINSIGHTS_CONNECTION_STRING: ${{ secrets. APPLICATIONINSIGHTS_CONNECTION_STRING }}
+          AZURE_AI_AGENT_API_VERSION: ${{ secrets.AZURE_AI_AGENT_API_VERSION }}
+          AZURE_AI_AGENT_ENDPOINT: ${{ secrets. AZURE_AI_AGENT_ENDPOINT }}
+          AZURE_AI_AGENT_MODEL_DEPLOYMENT_NAME: ${{ secrets. AZURE_AI_AGENT_MODEL_DEPLOYMENT_NAME }}
           AZURE_CREDENTIALS: ${{ secrets.AZURE_CREDENTIALS }}
+          AZURE_PROJECTS_ENDPOINT: ${{ secrets.AZURE_PROJECTS_ENDPOINT }}
           INDEX_NAME: ${{ secrets.INDEX_NAME }}
-          SEARCH_ENDPOINT: ${{ secrets.SEARCH_ENDPOINT }}
-          SEARCH_KEY: ${{ secrets.SEARCH_KEY }}
-          APPLICATIONINSIGHTS_CONNECTION_STRING: ${{ secrets.APPLICATIONINSIGHTS_CONNECTION_STRING }}
+          SEARCH_ENDPOINT: ${{ secrets. SEARCH_ENDPOINT }}
+          SEARCH_KEY: ${{ secrets. SEARCH_KEY }}
 
       - name: Azure Logout
         if: always()
