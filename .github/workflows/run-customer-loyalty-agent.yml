@@ -17,7 +17,6 @@ jobs:
   run-agent:
     runs-on: ubuntu-latest
     env:
-      # Provide the Projects endpoint via repository secret (no ENV secret in use)
       AZURE_PROJECTS_ENDPOINT: ${{ secrets.AZURE_PROJECTS_ENDPOINT }}
     steps:
       - name: Checkout repository
@@ -28,10 +27,18 @@ jobs:
         with:
           python-version: '3.11'
 
-      - name: Ensure jq is available (for parsing AZURE_CREDENTIALS)
+      - name: Ensure jq is available (for parsing AZURE_CREDENTIALS if needed)
         run: |
           sudo apt-get update
           sudo apt-get install -y jq
+        shell: bash
+
+      - name: Create src/.env from ENV secret (kept only in workspace) (if used)
+        if: ${{ secrets.ENV != '' }}
+        run: |
+          mkdir -p src
+          printf '%s' "${{ secrets.ENV }}" > src/.env
+          chmod 600 src/.env
         shell: bash
 
       - name: Login to Azure using service principal (AZURE_CREDENTIALS)
@@ -39,39 +46,64 @@ jobs:
         with:
           creds: ${{ secrets.AZURE_CREDENTIALS }}
 
-      - name: Export AZURE_* environment variables for SDKs (from AZURE_CREDENTIALS)
+      - name: Export AZURE_* environment variables for SDKs (parse AZURE_CREDENTIALS with Python)
+        # Use Python to parse the AZURE_CREDENTIALS secret reliably and write to GITHUB_ENV.
+        # This avoids jq JSON parsing errors caused by malformed JSON or unexpected encodings.
+        env:
+          AZURE_CREDENTIALS: ${{ secrets.AZURE_CREDENTIALS }}
+          GITHUB_ENV: ${{ github.env.GITHUB_ENV }}
         run: |
-          # Write the JSON secret to a temp file and extract the keys your code expects
-          echo "${{ secrets.AZURE_CREDENTIALS }}" > /tmp/azure_creds.json
-          AZ_CLIENT_ID=$(jq -r .clientId /tmp/azure_creds.json)
-          AZ_TENANT_ID=$(jq -r .tenantId /tmp/azure_creds.json)
-          AZ_CLIENT_SECRET=$(jq -r .clientSecret /tmp/azure_creds.json)
-          AZ_SUBSCRIPTION_ID=$(jq -r .subscriptionId // empty /tmp/azure_creds.json)
+          python - <<'PY'
+          import os, json, sys
 
-          # Export for subsequent steps in this job
-          echo "AZURE_CLIENT_ID=$AZ_CLIENT_ID" >> $GITHUB_ENV
-          echo "AZURE_TENANT_ID=$AZ_TENANT_ID" >> $GITHUB_ENV
-          echo "AZURE_CLIENT_SECRET=$AZ_CLIENT_SECRET" >> $GITHUB_ENV
-          if [ -n "$AZ_SUBSCRIPTION_ID" ]; then
-            echo "AZURE_SUBSCRIPTION_ID=$AZ_SUBSCRIPTION_ID" >> $GITHUB_ENV
-          fi
+          s = os.environ.get("AZURE_CREDENTIALS")
+          if not s:
+            print("AZURE_CREDENTIALS is empty", file=sys.stderr)
+            sys.exit(1)
+
+          try:
+            creds = json.loads(s)
+          except Exception as e:
+            # Helpful guidance for the user without printing the secret
+            print("Failed to parse AZURE_CREDENTIALS JSON:", e, file=sys.stderr)
+            print("Ensure the repository secret AZURE_CREDENTIALS contains valid JSON like:", file=sys.stderr)
+            print('{"clientId":"...","clientSecret":"...","tenantId":"...","subscriptionId":"..."}', file=sys.stderr)
+            sys.exit(1)
+
+          # Fields we want to export
+          client_id = creds.get("clientId") or creds.get("client_id")
+          tenant_id = creds.get("tenantId") or creds.get("tenant_id")
+          client_secret = creds.get("clientSecret") or creds.get("client_secret")
+          subscription_id = creds.get("subscriptionId") or creds.get("subscription_id") or ""
+
+          env_path = os.environ.get("GITHUB_ENV")
+          if not env_path:
+            print("GITHUB_ENV not available", file=sys.stderr)
+            sys.exit(1)
+
+          with open(env_path, "a") as f:
+            if client_id:
+              f.write(f"AZURE_CLIENT_ID={client_id}\n")
+            if tenant_id:
+              f.write(f"AZURE_TENANT_ID={tenant_id}\n")
+            if client_secret:
+              f.write(f"AZURE_CLIENT_SECRET={client_secret}\n")
+            if subscription_id:
+              f.write(f"AZURE_SUBSCRIPTION_ID={subscription_id}\n")
+
+          print("Exported AZURE_* variables to GITHUB_ENV")
+          PY
         shell: bash
 
-      - name: Upgrade pip and install Python dependencies (ensure required modules installed)
+      - name: Upgrade pip and install Python dependencies (ensure required imports available)
         run: |
           python -m pip install --upgrade pip
-
           if [ -f requirements.txt ]; then
             pip install -r requirements.txt
           else
-            # Ensure the modules required by your imports are available
-            pip install --upgrade \
-              python-dotenv \
-              azure-identity \
-              azure-ai-projects
+            pip install --upgrade python-dotenv azure-identity azure-ai-projects
           fi
 
-          # If repository is a python package, install it editable to make local modules importable
           if [ -f setup.py ] || [ -f pyproject.toml ]; then
             pip install -e .
           fi
@@ -85,14 +117,12 @@ jobs:
       - name: Show installed packages and debug imports (optional)
         run: |
           python -m pip show python-dotenv azure-identity azure-ai-projects || true
-          python -c "import importlib, sys; print('agent_processor importable:', importlib.util.find_spec('agent_processor') is not None)"
+          python -c "import importlib; print('agent_processor importable:', importlib.util.find_spec('agent_processor') is not None)"
           python -c "import os; print('AZURE_PROJECTS_ENDPOINT=', os.environ.get('AZURE_PROJECTS_ENDPOINT'))"
         shell: bash
 
       - name: Run customerLoyaltyAgent initializer
         env:
-          # AZURE_PROJECTS_ENDPOINT is provided at the job level above,
-          # and AZURE_CLIENT_ID / AZURE_TENANT_ID / AZURE_CLIENT_SECRET were exported to GITHUB_ENV earlier.
           AZURE_PROJECTS_ENDPOINT: ${{ env.AZURE_PROJECTS_ENDPOINT }}
           AZURE_CLIENT_ID: ${{ env.AZURE_CLIENT_ID }}
           AZURE_TENANT_ID: ${{ env.AZURE_TENANT_ID }}
