@@ -17,6 +17,7 @@ jobs:
   run-agent:
     runs-on: ubuntu-latest
     env:
+      # Provide the Projects endpoint via repository secret
       AZURE_PROJECTS_ENDPOINT: ${{ secrets.AZURE_PROJECTS_ENDPOINT }}
     steps:
       - name: Checkout repository
@@ -27,7 +28,7 @@ jobs:
         with:
           python-version: '3.11'
 
-      - name: Ensure jq is available (for optional tooling)
+      - name: Ensure jq is available (optional)
         run: |
           sudo apt-get update
           sudo apt-get install -y jq
@@ -44,12 +45,10 @@ jobs:
         run: |
           python - <<'PY'
           import os, json, sys
-
           s = os.environ.get("AZURE_CREDENTIALS")
           if not s:
             print("AZURE_CREDENTIALS is empty", file=sys.stderr)
             sys.exit(1)
-
           try:
             creds = json.loads(s)
           except Exception as e:
@@ -57,17 +56,14 @@ jobs:
             print("Ensure the repository secret AZURE_CREDENTIALS contains valid JSON like:", file=sys.stderr)
             print('{"clientId":"...","clientSecret":"...","tenantId":"...","subscriptionId":"..."}', file=sys.stderr)
             sys.exit(1)
-
           client_id = creds.get("clientId") or creds.get("client_id")
           tenant_id = creds.get("tenantId") or creds.get("tenant_id")
           client_secret = creds.get("clientSecret") or creds.get("client_secret")
           subscription_id = creds.get("subscriptionId") or creds.get("subscription_id") or ""
-
           env_path = os.environ.get("GITHUB_ENV")
           if not env_path:
             print("GITHUB_ENV not available", file=sys.stderr)
             sys.exit(1)
-
           with open(env_path, "a") as f:
             if client_id:
               f.write(f"AZURE_CLIENT_ID={client_id}\n")
@@ -77,7 +73,6 @@ jobs:
               f.write(f"AZURE_CLIENT_SECRET={client_secret}\n")
             if subscription_id:
               f.write(f"AZURE_SUBSCRIPTION_ID={subscription_id}\n")
-
           print("Exported AZURE_* variables to GITHUB_ENV")
           PY
         shell: bash
@@ -85,25 +80,65 @@ jobs:
       - name: Upgrade pip and install Python dependencies (ensure required imports available)
         run: |
           python -m pip install --upgrade pip
-
           if [ -f requirements.txt ]; then
             pip install -r requirements.txt
           else
-            # Core runtime deps for your imports
+            # Install core deps needed by your code and Azure SDK pieces
             pip install --upgrade \
               python-dotenv \
               azure-identity \
-              azure-ai-projects
+              azure-ai-projects \
+              azure-ai-agents \
+              azure-search-documents
           fi
 
-          # Install packages that provide azure.search and other AI components used by azure-ai-projects.
-          # azure-search-documents provides the azure.search namespace; azure-ai-agents is a dependency for agents-related imports.
-          pip install --upgrade azure-search-documents azure-ai-agents || true
-
-          # If repository is a python package, install it editable to make local modules importable
+          # If repository is a package, install it editable so local modules are importable
           if [ -f setup.py ] || [ -f pyproject.toml ]; then
             pip install -e .
           fi
+        shell: bash
+
+      - name: Create .env from ENV repository secret (kept only in workspace) and restrict permissions
+        # writes to both repository root .env and src/.env (some code expects root .env, some expects src/.env)
+        run: |
+          # create .env and src/.env from the ENV secret (if the secret is empty this will create an empty file)
+          printf '%s\n' "${{ secrets.ENV }}" > .env
+          mkdir -p src
+          printf '%s\n' "${{ secrets.ENV }}" > src/.env
+          chmod 600 .env src/.env
+        shell: bash
+
+      - name: Export variables from .env into job environment (GITHUB_ENV)
+        # Use python-dotenv to robustly parse the .env file and write each key to GITHUB_ENV.
+        # This avoids issues where libraries try to read env vars (like SEARCH_ENDPOINT) before your Python code
+        # loads .env itself.
+        run: |
+          python - <<'PY'
+          import os, sys
+          try:
+            from dotenv import dotenv_values
+          except Exception as e:
+            print("python-dotenv not available:", e, file=sys.stderr)
+            sys.exit(1)
+          env_path = os.path.join(os.getcwd(), ".env")
+          if not os.path.exists(env_path):
+            print(".env not found, nothing to export", file=sys.stderr)
+            sys.exit(1)
+          values = dotenv_values(env_path)  # returns dict of key->value
+          gh_env = os.environ.get("GITHUB_ENV")
+          if not gh_env:
+            print("GITHUB_ENV not available", file=sys.stderr)
+            sys.exit(1)
+          # write each non-empty value to GITHUB_ENV (do not print secrets)
+          with open(gh_env, "a") as f:
+            for k, v in values.items():
+              if v is None:
+                continue
+              # Replace any newlines with \n to keep single-line entries in env file
+              v_str = str(v).replace("\n", "\\n")
+              f.write(f"{k}={v_str}\n")
+          print("Exported variables from .env to GITHUB_ENV")
+          PY
         shell: bash
 
       - name: Add src to PYTHONPATH for local imports
@@ -113,10 +148,9 @@ jobs:
 
       - name: Show installed packages and debug imports (robust)
         run: |
-          python -m pip show python-dotenv azure-identity azure-ai-projects azure-search-documents azure-ai-agents || true
+          python -m pip show python-dotenv azure-identity azure-ai-projects azure-ai-agents azure-search-documents || true
           python - <<'PY'
-          import os, sys
-          ok = False
+          import os
           try:
             from importlib.util import find_spec
             ok = find_spec('agent_processor') is not None
@@ -126,11 +160,13 @@ jobs:
           print('agent_processor importable:', ok)
           print('PYTHONPATH=', os.environ.get('PYTHONPATH'))
           print('AZURE_PROJECTS_ENDPOINT=', os.environ.get('AZURE_PROJECTS_ENDPOINT'))
+          # Do not print secrets like SEARCH_ENDPOINT or keys
           PY
         shell: bash
 
       - name: Run customerLoyaltyAgent initializer
         env:
+          # AZURE_PROJECTS_ENDPOINT and AZURE_* variables were set earlier (AZURE_* via GITHUB_ENV)
           AZURE_PROJECTS_ENDPOINT: ${{ env.AZURE_PROJECTS_ENDPOINT }}
           AZURE_CLIENT_ID: ${{ env.AZURE_CLIENT_ID }}
           AZURE_TENANT_ID: ${{ env.AZURE_TENANT_ID }}
@@ -138,7 +174,6 @@ jobs:
           AZURE_SUBSCRIPTION_ID: ${{ env.AZURE_SUBSCRIPTION_ID }}
         run: |
           python --version
-          python -c "import sys, os; print('PYTHONPATH=', os.environ.get('PYTHONPATH'))"
           python -c "import os; print('AZURE_PROJECTS_ENDPOINT=', os.environ.get('AZURE_PROJECTS_ENDPOINT'))"
           python src/app/agents/customerLoyaltyAgent_initializer.py
         shell: bash
