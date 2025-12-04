@@ -63,13 +63,13 @@ jobs:
             sys.exit(1)
           with open(env_path, "a") as f:
             if client_id:
-              f.write(f"AZURE_CLIENT_ID={client_id}\n")
+              f.write("AZURE_CLIENT_ID=" + client_id + "\n")
             if tenant_id:
-              f.write(f"AZURE_TENANT_ID={tenant_id}\n")
+              f.write("AZURE_TENANT_ID=" + tenant_id + "\n")
             if client_secret:
-              f.write(f"AZURE_CLIENT_SECRET={client_secret}\n")
+              f.write("AZURE_CLIENT_SECRET=" + client_secret + "\n")
             if subscription_id:
-              f.write(f"AZURE_SUBSCRIPTION_ID={subscription_id}\n")
+              f.write("AZURE_SUBSCRIPTION_ID=" + subscription_id + "\n")
           print("Exported AZURE_* variables to GITHUB_ENV")
           PY
         shell: bash
@@ -95,7 +95,6 @@ jobs:
 
       - name: Create .env from ENV repository secret (kept only in workspace) and restrict permissions
         run: |
-          # write the ENV secret into .env and src/.env (do not print it)
           printf '%s\n' "${{ secrets.ENV }}" > .env
           mkdir -p src
           printf '%s\n' "${{ secrets.ENV }}" > src/.env
@@ -117,8 +116,7 @@ jobs:
             print(".env not found, nothing to export", file=sys.stderr)
             sys.exit(1)
 
-          # Read .env into a dictionary
-          raw_values = dotenv_values(env_path)  # preserves keys, returns values as strings (may include quotes)
+          raw_values = dotenv_values(env_path)
 
           # Helper to clean values: strip surrounding quotes and whitespace
           def clean_val(v):
@@ -141,9 +139,8 @@ jobs:
             for k, v in values.items():
               if v is None:
                 continue
-              # Escape newlines for GITHUB_ENV format
               v_str = v.replace("\n", "\\n")
-              f.write(f"{k}={v_str}\n")
+              f.write(k + "=" + v_str + "\n")
 
           # Accept multiple alternative names for the search endpoint; prefer SEARCH_ENDPOINT
           search_keys = ["SEARCH_ENDPOINT", "AZURE_SEARCH_ENDPOINT", "SEARCH_URL"]
@@ -151,9 +148,10 @@ jobs:
           for key in search_keys:
             if values.get(key):
               search_val = values.get(key)
-              # ensure canonical var name exists in environment
+              escaped = search_val.replace("\n", "\\n")
+              # avoid f-string with backslashes inside expression; use concatenation
               with open(gh_env, "a") as f:
-                f.write(f"SEARCH_ENDPOINT={values.get(key).replace('\\n','\\\\n')}\n")
+                f.write("SEARCH_ENDPOINT=" + escaped + "\n")
               break
 
           if not search_val:
@@ -183,7 +181,6 @@ jobs:
           print('agent_processor importable:', ok)
           print('PYTHONPATH=', os.environ.get('PYTHONPATH'))
           print('AZURE_PROJECTS_ENDPOINT=', os.environ.get('AZURE_PROJECTS_ENDPOINT'))
-          # do not print secret values such as SEARCH_ENDPOINT or SEARCH_KEY
           PY
         shell: bash
 
