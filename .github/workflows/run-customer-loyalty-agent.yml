@@ -39,26 +39,40 @@ jobs:
           pip install -r src/requirements.txt
 
       - name: Export ENV secret variables to environment
-        if: ${{ secrets.ENV != '' }}
+        env:
+          SECRET_ENV: ${{ secrets.ENV }}
         run: |
-          # secrets.ENV is expected to be lines of KEY=VALUE (or similar). We write it to a temp file
-          # and append valid KEY=VALUE lines to $GITHUB_ENV so they become available to later steps.
-          printf "%s\n" "${{ secrets.ENV }}" > .env || true
-          while IFS= read -r line; do
-            # skip empty lines and comment lines
-            if [ -n "$line" ] && [ "${line#\#}" = "$line" ]; then
-              echo "$line" >> "$GITHUB_ENV"
-            fi
-          done < .env
+          if [ -n "$SECRET_ENV" ]; then
+            printf "%s\n" "$SECRET_ENV" > .env
+            while IFS= read -r line; do
+              # skip empty lines and comment lines
+              if [ -n "$line" ] && [ "${line#\#}" = "$line" ]; then
+                echo "$line" >> "$GITHUB_ENV"
+              fi
+            done < .env
+            echo "Loaded ENV secret into environment."
+          else
+            echo "No ENV secret provided; skipping."
+          fi
 
-      - name: Parse AZURE_CREDENTIALS and export standard AZURE_* env vars
-        if: ${{ secrets.AZURE_CREDENTIALS != '' }}
+      - name: Parse AZURE_CREDENTIALS and export AZURE_* env vars
+        env:
+          AZ_CREDS: ${{ secrets.AZURE_CREDENTIALS }}
         run: |
-          # Write the raw JSON from the secret to a file
-          printf "%s\n" "${{ secrets.AZURE_CREDENTIALS }}" > azure_creds.json
-          # Use Python to parse the JSON and append common AZURE_* variables to GITHUB_ENV so
-          # azure.identity.DefaultAzureCredential (or explicit credentials) can pick them up.
-          python - <<'PY'
+          if [ -n "$AZ_CREDS" ]; then
+            echo "$AZ_CREDS" > azure_creds.json
+            # Try using jq to parse; fallback to Python if jq isn't available.
+            if command -v jq >/dev/null 2>&1; then
+              CLIENT_ID=$(jq -r '.clientId // empty' azure_creds.json)
+              TENANT_ID=$(jq -r '.tenantId // empty' azure_creds.json)
+              CLIENT_SECRET=$(jq -r '.clientSecret // empty' azure_creds.json)
+              SUBSCRIPTION_ID=$(jq -r '.subscriptionId // empty' azure_creds.json)
+              [ -n "$CLIENT_ID" ] && echo "AZURE_CLIENT_ID=$CLIENT_ID" >> "$GITHUB_ENV"
+              [ -n "$TENANT_ID" ] && echo "AZURE_TENANT_ID=$TENANT_ID" >> "$GITHUB_ENV"
+              [ -n "$CLIENT_SECRET" ] && echo "AZURE_CLIENT_SECRET=$CLIENT_SECRET" >> "$GITHUB_ENV"
+              [ -n "$SUBSCRIPTION_ID" ] && echo "AZURE_SUBSCRIPTION_ID=$SUBSCRIPTION_ID" >> "$GITHUB_ENV"
+            else
+              python - <<'PY'
 import json, os
 creds = json.load(open('azure_creds.json'))
 mapping = {
@@ -69,19 +83,22 @@ mapping = {
 }
 with open(os.environ['GITHUB_ENV'], 'a') as gh:
     for k, env_name in mapping.items():
-        if k in creds and creds[k] is not None:
-            gh.write(f"{env_name}={creds[k]}\n")
+        val = creds.get(k)
+        if val:
+            gh.write(f"{env_name}={val}\n")
 PY
+            fi
+            echo "Parsed AZURE_CREDENTIALS into AZURE_* environment variables."
+          else
+            echo "No AZURE_CREDENTIALS secret provided; skipping."
+          fi
 
-      - name: Azure Login (optional, helps set session for az CLI and some SDK operations)
+      - name: Azure Login (optional, provides az CLI/session)
         if: ${{ secrets.AZURE_CREDENTIALS != '' }}
         uses: azure/login@v1
         with:
           creds: ${{ secrets.AZURE_CREDENTIALS }}
 
       - name: Run the Customer Loyalty Agent initializer
-        env:
-          # Any variables exported to GITHUB_ENV are available here automatically.
-          # Add any explicit env overrides here if needed.
         run: |
           python src/app/agents/customerLoyaltyAgent_initializer.py
