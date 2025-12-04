@@ -6,7 +6,7 @@ on:
       - main
     paths:
       - 'src/app/agents/customerLoyaltyAgent_initializer.py'
-      - 'src/prompts/CustomerLoyaltyAgentPrompt. txt'
+      - 'src/prompts/CustomerLoyaltyAgentPrompt.txt'
       - 'src/app/tools/discountLogic.py'
   pull_request:
     branches:
@@ -47,7 +47,7 @@ jobs:
 
       - name: Run Customer Loyalty Agent
         run: |
-          python src/app/agents/customerLoyaltyAgent_initializer. py
+          python src/app/agents/customerLoyaltyAgent_initializer.py
         env:
           AZURE_CREDENTIALS: ${{ secrets.AZURE_CREDENTIALS }}
           INDEX_NAME: ${{ secrets.INDEX_NAME }}
