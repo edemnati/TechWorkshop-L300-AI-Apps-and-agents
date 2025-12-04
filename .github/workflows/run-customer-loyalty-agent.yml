@@ -27,18 +27,10 @@ jobs:
         with:
           python-version: '3.11'
 
-      - name: Ensure jq is available (for parsing AZURE_CREDENTIALS if needed)
+      - name: Ensure jq is available (for optional tooling)
         run: |
           sudo apt-get update
           sudo apt-get install -y jq
-        shell: bash
-
-      - name: Create src/.env from ENV secret (kept only in workspace) (if used)
-        if: ${{ secrets.ENV != '' }}
-        run: |
-          mkdir -p src
-          printf '%s' "${{ secrets.ENV }}" > src/.env
-          chmod 600 src/.env
         shell: bash
 
       - name: Login to Azure using service principal (AZURE_CREDENTIALS)
@@ -48,10 +40,8 @@ jobs:
 
       - name: Export AZURE_* environment variables for SDKs (parse AZURE_CREDENTIALS with Python)
         # Use Python to parse the AZURE_CREDENTIALS secret reliably and write to GITHUB_ENV.
-        # This avoids jq JSON parsing errors caused by malformed JSON or unexpected encodings.
         env:
           AZURE_CREDENTIALS: ${{ secrets.AZURE_CREDENTIALS }}
-          GITHUB_ENV: ${{ github.env.GITHUB_ENV }}
         run: |
           python - <<'PY'
           import os, json, sys
@@ -64,13 +54,11 @@ jobs:
           try:
             creds = json.loads(s)
           except Exception as e:
-            # Helpful guidance for the user without printing the secret
             print("Failed to parse AZURE_CREDENTIALS JSON:", e, file=sys.stderr)
             print("Ensure the repository secret AZURE_CREDENTIALS contains valid JSON like:", file=sys.stderr)
             print('{"clientId":"...","clientSecret":"...","tenantId":"...","subscriptionId":"..."}', file=sys.stderr)
             sys.exit(1)
 
-          # Fields we want to export
           client_id = creds.get("clientId") or creds.get("client_id")
           tenant_id = creds.get("tenantId") or creds.get("tenant_id")
           client_secret = creds.get("clientSecret") or creds.get("client_secret")
@@ -117,7 +105,7 @@ jobs:
       - name: Show installed packages and debug imports (optional)
         run: |
           python -m pip show python-dotenv azure-identity azure-ai-projects || true
-          python -c "import importlib; print('agent_processor importable:', importlib.util.find_spec('agent_processor') is not None)"
+          python -c "import importlib, sys; print('agent_processor importable:', importlib.util.find_spec('agent_processor') is not None)"
           python -c "import os; print('AZURE_PROJECTS_ENDPOINT=', os.environ.get('AZURE_PROJECTS_ENDPOINT'))"
         shell: bash
 
