@@ -1,0 +1,50 @@
+name: Build and push to Azure Container Registry (ACR username/password)
+
+on:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: write
+  packages: write
+
+jobs:
+  build-and-push:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Create .env from secret (kept only in workspace)
+        run: |
+          # create src/.env from the ENV secret and restrict permissions
+          printf '%s' "${{ secrets.ENV }}" > src/.env
+          chmod 600 src/.env
+        shell: bash
+
+      - name: Log in to ACR using username/password
+        uses: docker/login-action@v2
+        with:
+          registry: ${{ secrets.ACR_LOGIN_SERVER }}
+          username: ${{ secrets.ACR_USERNAME }}
+          password: ${{ secrets.ACR_PASSWORD }}
+
+      - name: Build and push Docker image (context limited to src/)
+        uses: docker/build-push-action@v4
+        with:
+          context: src
+          file: src/Dockerfile
+          push: true
+          tags: |
+            ${{ secrets.ACR_LOGIN_SERVER }}/techworkshop:${{ github.sha }}
+            ${{ secrets.ACR_LOGIN_SERVER }}/techworkshop:latest
+
+      - name: Cleanup .env
+        if: always()
+        run: |
+          # Try to securely remove the file; fall back to rm if shred not available
+          shred -u src/.env 2>/dev/null || rm -f src/.env
+        shell: bash
