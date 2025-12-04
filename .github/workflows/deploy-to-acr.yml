@@ -1,4 +1,4 @@
-name: Build and push to Azure Container Registry (service principal)
+name: Build and push to Azure Container Registry (ACR username/password)
 
 on:
   push:
@@ -20,24 +20,17 @@ jobs:
 
       - name: Create .env from secret (kept only in workspace)
         run: |
-          # create .env inside src/ from the ENV secret and restrict permissions
+          # create src/.env from the ENV secret and restrict permissions
           printf '%s' "${{ secrets.ENV }}" > src/.env
           chmod 600 src/.env
         shell: bash
 
-      - name: Login to Azure using service principal
-        uses: azure/login@v1
+      - name: Log in to ACR using username/password
+        uses: docker/login-action@v2
         with:
-          client-id: ${{ secrets.AZURE_CLIENT_ID }}
-          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
-          client-secret: ${{ secrets.AZURE_CLIENT_SECRET }}
-
-      - name: Login to Azure Container Registry (using az acr login)
-        run: |
-          # derive registry name from login server (myregistry.azurecr.io -> myregistry)
-          REGISTRY_NAME=$(echo "${{ secrets.ACR_LOGIN_SERVER }}" | cut -d. -f1)
-          az acr login --name "$REGISTRY_NAME"
-        shell: bash
+          registry: ${{ secrets.ACR_LOGIN_SERVER }}
+          username: ${{ secrets.ACR_USERNAME }}
+          password: ${{ secrets.ACR_PASSWORD }}
 
       - name: Build and push Docker image (context limited to src/)
         uses: docker/build-push-action@v4
