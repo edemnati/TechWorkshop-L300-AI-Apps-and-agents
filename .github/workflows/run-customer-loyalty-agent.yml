@@ -17,7 +17,7 @@ jobs:
   run-agent:
     runs-on: ubuntu-latest
     env:
-      # Use the repository secret AZURE_PROJECTS_ENDPOINT directly (no ENV secret)
+      # Provide the Projects endpoint via repository secret (no ENV secret in use)
       AZURE_PROJECTS_ENDPOINT: ${{ secrets.AZURE_PROJECTS_ENDPOINT }}
     steps:
       - name: Checkout repository
@@ -41,38 +41,43 @@ jobs:
 
       - name: Export AZURE_* environment variables for SDKs (from AZURE_CREDENTIALS)
         run: |
+          # Write the JSON secret to a temp file and extract the keys your code expects
           echo "${{ secrets.AZURE_CREDENTIALS }}" > /tmp/azure_creds.json
           AZ_CLIENT_ID=$(jq -r .clientId /tmp/azure_creds.json)
           AZ_TENANT_ID=$(jq -r .tenantId /tmp/azure_creds.json)
           AZ_CLIENT_SECRET=$(jq -r .clientSecret /tmp/azure_creds.json)
+          AZ_SUBSCRIPTION_ID=$(jq -r .subscriptionId // empty /tmp/azure_creds.json)
+
+          # Export for subsequent steps in this job
           echo "AZURE_CLIENT_ID=$AZ_CLIENT_ID" >> $GITHUB_ENV
           echo "AZURE_TENANT_ID=$AZ_TENANT_ID" >> $GITHUB_ENV
           echo "AZURE_CLIENT_SECRET=$AZ_CLIENT_SECRET" >> $GITHUB_ENV
-          SUBS_ID=$(jq -r .subscriptionId // empty /tmp/azure_creds.json)
-          if [ -n "$SUBS_ID" ]; then
-            echo "AZURE_SUBSCRIPTION_ID=$SUBS_ID" >> $GITHUB_ENV
+          if [ -n "$AZ_SUBSCRIPTION_ID" ]; then
+            echo "AZURE_SUBSCRIPTION_ID=$AZ_SUBSCRIPTION_ID" >> $GITHUB_ENV
           fi
         shell: bash
 
-      - name: Upgrade pip and install Python dependencies (ensure required imports available)
+      - name: Upgrade pip and install Python dependencies (ensure required modules installed)
         run: |
           python -m pip install --upgrade pip
+
           if [ -f requirements.txt ]; then
             pip install -r requirements.txt
           else
+            # Ensure the modules required by your imports are available
             pip install --upgrade \
               python-dotenv \
               azure-identity \
               azure-ai-projects
           fi
 
-          # If your repo is packaged, install it so local modules (agent_processor, agent_initializer) are importable
+          # If repository is a python package, install it editable to make local modules importable
           if [ -f setup.py ] || [ -f pyproject.toml ]; then
             pip install -e .
           fi
         shell: bash
 
-      - name: Add src to PYTHONPATH
+      - name: Add src to PYTHONPATH for local imports
         run: |
           echo "PYTHONPATH=${{ github.workspace }}/src" >> $GITHUB_ENV
         shell: bash
@@ -80,13 +85,14 @@ jobs:
       - name: Show installed packages and debug imports (optional)
         run: |
           python -m pip show python-dotenv azure-identity azure-ai-projects || true
-          python -c "import importlib; print('agent_processor importable:', importlib.util.find_spec('agent_processor') is not None)"
+          python -c "import importlib, sys; print('agent_processor importable:', importlib.util.find_spec('agent_processor') is not None)"
           python -c "import os; print('AZURE_PROJECTS_ENDPOINT=', os.environ.get('AZURE_PROJECTS_ENDPOINT'))"
         shell: bash
 
       - name: Run customerLoyaltyAgent initializer
         env:
-          # AZURE_PROJECTS_ENDPOINT is provided at job env and AZURE_* were exported to GITHUB_ENV
+          # AZURE_PROJECTS_ENDPOINT is provided at the job level above,
+          # and AZURE_CLIENT_ID / AZURE_TENANT_ID / AZURE_CLIENT_SECRET were exported to GITHUB_ENV earlier.
           AZURE_PROJECTS_ENDPOINT: ${{ env.AZURE_PROJECTS_ENDPOINT }}
           AZURE_CLIENT_ID: ${{ env.AZURE_CLIENT_ID }}
           AZURE_TENANT_ID: ${{ env.AZURE_TENANT_ID }}
